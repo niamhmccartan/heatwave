@@ -1,0 +1,333 @@
+---
+title: "HW_17_Final"
+output: html_document
+date: "2024-05-01"
+---
+
+###Library Set Up
+
+```{r Library Setup}
+#creating percentages and tidying data - use
+library(dplyr)
+#tweedie regression
+library(statmod)
+#Negative binomial GLM 
+library(MASS)
+#elastic regression
+library(glmnet)
+#AUC binomial model check
+library(pROC)
+#feature importance 
+library(caret)
+#post-hoc contrasts in models 
+library(emmeans)
+#GGPlot Packages
+library(ggplot2)
+```
+
+###Import and Clean Data 
+
+````{r Import Data Set}
+setwd("/Users/niamhmccartan/Documents/College/PhD/Papers/HW_All/Final_Documents")
+
+heatwave17<-read.csv("HW_17.csv", 
+                 header = TRUE, 
+                 stringsAsFactors = FALSE)
+```
+
+```{r Remove early deaths, males and uninfected controls}
+HW17 <- subset(heatwave17, Include == "Yes")
+```
+
+```{r Make treatment column}
+HW17$Treatment <- paste(HW17$Experiment, HW17$Timing, HW17$Duration)
+HW17$Treat1 <- paste(HW17$Timing, HW17$Duration)
+```
+
+```{r Set Variables}
+HW17$A_Temp <- as.factor(HW17$A_Temp)
+HW17$Experiment <- as.factor(HW17$Experiment)
+HW17$Real_Avg <- as.numeric(HW17$Real_Avg)
+HW17$Timing <- as.factor(HW17$Timing)
+HW17$Duration <- as.factor(HW17$Duration)
+HW17$Infection <- as.numeric(HW17$Infection)
+HW17$Spores <- as.numeric(HW17$Spores)
+HW17$Spore_R <- as.numeric(HW17$Spore_R)
+HW17$Treatment <- as.factor(HW17$Treatment)
+HW17$Treat1 <- as.factor(HW17$Treat1)
+```
+
+```{r Specifying Levels of Factors}
+HW17$Timing <- factor(HW17$Timing, levels = c("C","-10","0","10"))
+HW17$Duration <- factor(HW17$Duration, levels = c("0", "3", "6"))
+```
+
+```{r Adding Proportion Infected and Standard Error of Burden Column}
+HW17 = HW17 %>%
+  group_by(Treatment, A_Temp) %>% 
+  #Make proportion infected columns 
+  add_count(Treatment) %>% 
+  mutate(
+    nn = sum(Infection != 0),
+    Prop = nn/n,
+  #creating binomial confidence intervals
+    se.I = sqrt(Prop * (1-Prop)/n),
+    lower.I = pmax(Prop - (se.I * 1.96), 0),
+    upper.I = pmin(Prop + (se.I * 1.96), 1)) %>% 
+  #Make standard error columns
+  mutate(
+    mean = mean(Spores, na.rm = T),
+    sd.B = sd(Spores, na.rm = T),
+    se.B = sd.B/sqrt(n())) %>%
+  ungroup()
+```
+
+```{r Extra Subsets}
+# Create a new data frame HW17.NA with rows without NAs in the 'Spores' column
+HW17.NA <- HW17[complete.cases(HW17$Spores), ]
+
+#Subset treatments at 17 only 
+Comp17 <- HW17.NA[HW17.NA$A_Temp == "17", ]
+
+#Subset core temperatures
+Comp17Duration <- subset(Comp17, Timing %in% c("-10","0","10"))
+```
+
+```{r Timing Subsets Burden}
+#making a subset by each timing and constant controls 
+HW17Amten.HWB <- subset(HW17.NA, Experiment == "A" & Timing == "-10") 
+HW17Azero.HWB <- subset(HW17.NA, Experiment == "A" & Timing == "0")
+HW17Aten.HWB<- subset(HW17.NA, Experiment == "A" & Timing == "10")
+
+HW17Bmten.HWB <- subset(HW17.NA, Experiment == "B" & Timing == "-10") 
+HW17Bzero.HWB <- subset(HW17.NA, Experiment == "B" & Timing == "0")
+HW17Bten.HWB<- subset(HW17.NA, Experiment == "B" & Timing == "10")
+```
+
+###Check baths
+
+```{r Temperature and Bath Interactions for Burden}
+Bath.17.HWB <- glm.nb(Spores ~ Bath, data = Comp17)
+summary(Bath.17.HWB)
+
+Bath.Test.17.HWB <- anova(Bath.17.HWB, test = "Chi")
+Bath.Test.17.HWB
+```
+
+###Burden Model at 17 Degrees
+
+```{r Initial GLM to check theta and distribution}
+comparison.17.HWB <- glm.nb(Spores ~ Experiment + Timing + Duration, data = Comp17)
+summary(comparison.17.HWB)
+
+comptest.17.HWB <- anova(comparison.17.HWB, test = "Chi")
+comptest.17.HWB
+# no interaction so just pluses not stars 
+```
+
+Burden with B only 
+
+```{r}
+Comp17B <- subset(Comp17, Comp17$Experiment == "B")
+
+comparison.17B.HWB <- glm.nb(Spores ~ Timing + Duration, data = Comp17B)
+summary(comparison.17B.HWB)
+
+comptest.17B.HWB <- anova(comparison.17B.HWB, test = "Chi")
+comptest.17B.HWB
+```
+
+
+###Custom Contrasts
+
+```{r Total with constants}
+#Model used 
+Treat.AT.17.HWB <- glm.nb(Spores ~ Treatment, data = Comp17)
+
+EMM.17.HWB <- emmeans(Treat.AT.17.HWB, ~ Treatment, data = Comp17)
+EMM.17.HWB
+```
+
+```{r Total with Constants}
+A.BT.3.17.HWB <- c(1,0,0,0,0,0,0,0,0,0,0,0,0,0)
+A.BT.6.17.HWB <- c(0,1,0,0,0,0,0,0,0,0,0,0,0,0)
+A.DT.3.17.HWB <- c(0,0,1,0,0,0,0,0,0,0,0,0,0,0)
+A.DT.6.17.HWB <- c(0,0,0,1,0,0,0,0,0,0,0,0,0,0)
+A.AT.3.17.HWB <- c(0,0,0,0,1,0,0,0,0,0,0,0,0,0)
+A.AT.6.17.HWB <- c(0,0,0,0,0,1,0,0,0,0,0,0,0,0)
+A.CT.0.17.HWB <- c(0,0,0,0,0,0,1,0,0,0,0,0,0,0)
+B.BT.3.17.HWB <- c(0,0,0,0,0,0,0,1,0,0,0,0,0,0)
+B.BT.6.17.HWB <- c(0,0,0,0,0,0,0,0,1,0,0,0,0,0)
+B.DT.3.17.HWB <- c(0,0,0,0,0,0,0,0,0,1,0,0,0,0)
+B.DT.6.17.HWB <- c(0,0,0,0,0,0,0,0,0,0,1,0,0,0)
+B.AT.3.17.HWB <- c(0,0,0,0,0,0,0,0,0,0,0,1,0,0)
+B.AT.6.17.HWB <- c(0,0,0,0,0,0,0,0,0,0,0,0,1,0)
+B.CT.0.17.HWB <- c(0,0,0,0,0,0,0,0,0,0,0,0,0,1)
+```
+
+```{r CC Matrix Comparing Treatment to C then compare p values}
+contrast(EMM.17.HWB, adjust = "BH", method = list(
+  "Exp A 3B vs A Constant" = A.BT.3.17.HWB - A.CT.0.17.HWB,
+  "Exp B 3B vs B Constant" = B.BT.3.17.HWB - B.CT.0.17.HWB,
+  "Exp A 6B vs A Constant" = A.BT.6.17.HWB - A.CT.0.17.HWB,
+  "Exp B 6B vs B Constant" = B.BT.6.17.HWB - B.CT.0.17.HWB,
+    "Exp A 6B vs Exp A 3B" = A.BT.6.17.HWB - A.BT.3.17.HWB,
+    "Exp B 6B vs Exp B 3B" = B.BT.6.17.HWB - B.BT.3.17.HWB,
+  "Exp A 3D vs A Constant" = A.DT.3.17.HWB - A.CT.0.17.HWB,
+  "Exp B 3D vs B Constant" = B.DT.3.17.HWB - B.CT.0.17.HWB,
+  "Exp A 6D vs A Constant" = A.DT.6.17.HWB - A.CT.0.17.HWB,
+  "Exp B 6D vs B Constant" = B.DT.6.17.HWB - B.CT.0.17.HWB,
+    "Exp A 6D vs Exp A 3D" = A.DT.6.17.HWB - A.DT.3.17.HWB,
+    "Exp B 6D vs Exp B 3D" = B.DT.6.17.HWB - B.DT.3.17.HWB,
+  "Exp A 3A vs A Constant" = A.AT.3.17.HWB - A.CT.0.17.HWB,
+  "Exp B 3A vs B Constant" = B.AT.3.17.HWB - B.CT.0.17.HWB,
+  "Exp A 6A vs A Constant" = A.AT.6.17.HWB - A.CT.0.17.HWB,
+  "Exp B 6A vs B Constant" = B.AT.6.17.HWB - B.CT.0.17.HWB,
+    "Exp A 6A vs Exp A 3A" = A.AT.6.17.HWB - A.AT.3.17.HWB,
+    "Exp B 6A vs Exp B 3A" = B.AT.6.17.HWB - B.AT.3.17.HWB))
+```
+
+###Graphing Burden Boxplot
+
+```{r Exp A Before Graph}
+AMinus10.HWB <- ggplot(HW17Amten.HWB, aes(x = Duration, y = Spores, fill = Duration)) +
+  geom_hline(yintercept = 1081, color = "#BFBFBF") + #upper SE (SE = 131)
+  geom_hline(yintercept = 819, color = "#BFBFBF") + #lower SE (SE = 131)
+  geom_hline(yintercept = 950, color = "#A6A6A6", linetype = "dashed") +
+  geom_boxplot() + # Line for constant treatment
+  # Add ribbon
+  scale_fill_manual(values = c("#E87D72", "#56BDC2")) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  theme(axis.text = element_text(size = 14)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  guides(fill = "none") +
+  coord_cartesian(ylim = c(0, 2500)) 
+
+AMinus10.HWB
+
+ggsave("AMinus10.HWB.png", width = 2.5, height = 3.5)
+```
+
+```{r Exp B Before Graph}
+BMinus10.HWB <- ggplot(HW17Bmten.HWB, aes(x = Duration, y = Spores, fill = Duration)) +
+  geom_hline(yintercept = 612, color = "#BFBFBF") + #upper SE (SE = 76)
+  geom_hline(yintercept = 460, color = "#BFBFBF") + #lower SE (SE = 76)
+  geom_hline(yintercept = 536, color = "#A6A6A6", linetype = "dashed") +
+  geom_boxplot() + # Line for constant treatment
+  # Add ribbon
+  scale_fill_manual(values = c("#E87D72", "#56BDC2")) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  theme(axis.text = element_text(size = 14)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  guides(fill = "none") +
+  coord_cartesian(ylim = c(0, 2500)) 
+
+BMinus10.HWB
+
+ggsave("BMinus10.HWB.png", width = 2.5, height = 3.5)
+```
+
+```{r Exp A During Graph}
+Azero.HWB <- ggplot(HW17Azero.HWB, aes(x = Duration, y = Spores, fill = Duration)) +
+  geom_hline(yintercept = 1081, color = "#BFBFBF") + #upper SE (SE = 131)
+  geom_hline(yintercept = 819, color = "#BFBFBF") + #lower SE (SE = 131)
+  geom_hline(yintercept = 950, color = "#A6A6A6", linetype = "dashed") +
+  geom_boxplot() + # Line for constant treatment
+  # Add ribbon
+  scale_fill_manual(values = c("#E87D72", "#56BDC2")) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  theme(axis.text = element_text(size = 14)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  guides(fill = "none") +
+  coord_cartesian(ylim = c(0, 2500)) 
+
+Azero.HWB
+
+ggsave("Azero.HWB.png", width = 2.5, height = 3.5)
+```
+
+```{r Exp B During Graph}
+Bzero.HWB <- ggplot(HW17Bzero.HWB, aes(x = Duration, y = Spores, fill = Duration)) +
+  geom_hline(yintercept = 612, color = "#BFBFBF") + #upper SE (SE = 76)
+  geom_hline(yintercept = 460, color = "#BFBFBF") + #lower SE (SE = 76)
+  geom_hline(yintercept = 536, color = "#A6A6A6", linetype = "dashed") +
+  geom_boxplot() + # Line for constant treatment
+  # Add ribbon
+  scale_fill_manual(values = c("#E87D72", "#56BDC2")) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  theme(axis.text = element_text(size = 14)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  guides(fill = "none") +
+  coord_cartesian(ylim = c(0, 2500)) 
+
+Bzero.HWB
+
+ggsave("Bzero.HWB.png", width = 2.5, height = 3.5)
+```
+
+```{r Exp A After Graph}
+Aten.HWB <- ggplot(HW17Aten.HWB, aes(x = Duration, y = Spores, fill = Duration)) +
+  geom_hline(yintercept = 1081, color = "#BFBFBF") + #upper SE (SE = 131)
+  geom_hline(yintercept = 819, color = "#BFBFBF") + #lower SE (SE = 131)
+  geom_hline(yintercept = 950, color = "#A6A6A6", linetype = "dashed") +
+  geom_boxplot() + # Line for constant treatment
+  # Add ribbon
+  scale_fill_manual(values = c("#E87D72", "#56BDC2")) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  theme(axis.text = element_text(size = 14)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  guides(fill = "none") +
+  coord_cartesian(ylim = c(0, 2500)) 
+
+Aten.HWB
+
+ggsave("Aten.HWB.png", width = 2.5, height = 3.5)
+```
+
+```{r Exp B Before Graph}
+Bten.HWB <- ggplot(HW17Bten.HWB, aes(x = Duration, y = Spores, fill = Duration)) +
+  geom_hline(yintercept = 612, color = "#BFBFBF") + #upper SE (SE = 76)
+  geom_hline(yintercept = 460, color = "#BFBFBF") + #lower SE (SE = 76)
+  geom_hline(yintercept = 536, color = "#A6A6A6", linetype = "dashed") +
+  geom_boxplot() + # Line for constant treatment
+  # Add ribbon
+  scale_fill_manual(values = c("#E87D72", "#56BDC2")) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  theme(panel.background = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  theme(axis.text = element_text(size = 14)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  guides(fill = "none") +
+  scale_y_continuous(position = "right") +
+  coord_cartesian(ylim = c(0, 2500)) 
+
+Bten.HWB
+
+ggsave("Bten.HWB.png", width = 2.5, height = 3.5)
+```
+
+
+
+
